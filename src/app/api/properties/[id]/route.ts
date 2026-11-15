@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOrganization } from "@/lib/session";
 import { db } from "@/lib/db";
+import { withErrorHandler } from "@/lib/api-middleware";
 import { handleApiError } from "@/lib/errors";
 
 const propertyParamSchema = z.object({
@@ -18,73 +19,61 @@ const updatePropertySchema = z.object({
   description: z.string().optional(),
 });
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { organizationId } = await requireOrganization();
-    const { id } = propertyParamSchema.parse(await params);
-    const property = await db.property.findFirst({
-      where: { id, organizationId },
-      include: {
-        units: { include: { tenant: true } },
-        _count: { select: { maintenanceRequests: true, maintenanceExpenses: true } },
-      },
-    });
+const GET = withErrorHandler(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
+  const { organizationId } = await requireOrganization();
+  const { id } = propertyParamSchema.parse(await params);
+  const property = await db.property.findFirst({
+    where: { id, organizationId, deletedAt: null },
+    include: {
+      units: { include: { tenant: true } },
+      _count: { select: { maintenanceRequests: true, maintenanceExpenses: true } },
+    },
+  });
 
-    if (!property) {
-      return NextResponse.json({ error: "Property not found" }, { status: 404 });
-    }
-
-    return NextResponse.json(property);
-  } catch (err) {
-    const { error, statusCode, issues } = handleApiError(err);
-    return NextResponse.json({ error, ...(issues ? { issues } : {}) }, { status: statusCode });
+  if (!property) {
+    return NextResponse.json({ error: "Property not found" }, { status: 404 });
   }
-}
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { organizationId } = await requireOrganization();
-    const { id } = propertyParamSchema.parse(await params);
-    const body = await req.json();
-    const data = updatePropertySchema.parse(body);
+  return NextResponse.json(property);
+});
 
-    const property = await db.property.update({
-      where: { id },
-      data: { ...data, organizationId },
-    });
+const PATCH = withErrorHandler(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
+  const { organizationId } = await requireOrganization();
+  const { id } = propertyParamSchema.parse(await params);
+  const body = await req.json();
+  const data = updatePropertySchema.parse(body);
 
-    return NextResponse.json(property);
-  } catch (err) {
-    const { error, statusCode, issues } = handleApiError(err);
-    return NextResponse.json({ error, ...(issues ? { issues } : {}) }, { status: statusCode });
+  const property = await db.property.update({
+    where: { id },
+    data: { ...data, organizationId },
+  });
+
+  return NextResponse.json(property);
+});
+
+const DELETE = withErrorHandler(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
+  const { organizationId } = await requireOrganization();
+  const { id } = propertyParamSchema.parse(await params);
+  const property = await db.property.findFirst({
+    where: { id, organizationId, deletedAt: null },
+    include: { _count: { select: { units: true } } },
+  });
+
+  if (!property) {
+    return NextResponse.json({ error: "Property not found" }, { status: 404 });
   }
-}
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { organizationId } = await requireOrganization();
-    const { id } = propertyParamSchema.parse(await params);
-    const property = await db.property.findFirst({
-      where: { id, organizationId },
-      include: { _count: { select: { units: true } } },
-    });
-
-    if (!property) {
-      return NextResponse.json({ error: "Property not found" }, { status: 404 });
-    }
-
-    if (property._count.units > 0) {
-      return NextResponse.json(
-        { error: "Cannot delete property with existing units. Remove units first." },
-        { status: 400 }
-      );
-    }
-
-    await db.property.delete({ where: { id } });
-
-    return NextResponse.json({ message: "Property deleted" });
-  } catch (err) {
-    const { error, statusCode, issues } = handleApiError(err);
-    return NextResponse.json({ error, ...(issues ? { issues } : {}) }, { status: statusCode });
+  if (property._count.units > 0) {
+    return NextResponse.json(
+      { error: "Cannot delete property with existing units. Remove units first." },
+      { status: 400 }
+    );
   }
-}
+
+  // Soft delete
+  await db.property.update({ where: { id }, data: { deletedAt: new Date() } });
+
+  return NextResponse.json({ message: "Property deleted" });
+});
+
+export { GET, PATCH, DELETE };

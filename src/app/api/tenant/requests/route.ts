@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOrganization, getCurrentUser } from "@/lib/session";
 import { db } from "@/lib/db";
+import { MaintenanceRequestService } from "@/lib/services/maintenance";
+import { handleApiError } from "@/lib/errors";
 
 const requestSchema = z.object({
   propertyId: z.string().min(1, "Property is required"),
@@ -38,20 +40,12 @@ export async function GET(req: NextRequest) {
       tenantId: tenant.id,
     };
 
-    const [requests, total] = await Promise.all([
-      db.maintenanceRequest.findMany({
-        where,
-        include: { property: true, unit: true, assignedContractor: true },
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-      db.maintenanceRequest.count({ where }),
-    ]);
+    const result = await MaintenanceRequestService.list(ctx.organizationId, where, { page, pageSize });
 
-    return NextResponse.json({ data: requests, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+    return NextResponse.json(result);
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Internal server error" }, { status: 500 });
+    const { error: errorMessage, statusCode, issues } = handleApiError(error);
+    return NextResponse.json({ error: errorMessage, ...(issues ? { issues } : {}) }, { status: statusCode });
   }
 }
 
@@ -97,55 +91,19 @@ export async function POST(req: NextRequest) {
       data.unitId = tenant.unitId;
     }
 
-    const count = await db.maintenanceRequest.count({ where: { organizationId: ctx.organizationId } });
-    const requestNumber = `WR-${String(count + 1).padStart(4, "0")}`;
-
-    const result = await db.$transaction(async (tx) => {
-      const request = await tx.maintenanceRequest.create({
-        data: {
-          organizationId: ctx.organizationId,
-          requestNumber,
-          propertyId: data.propertyId,
-          unitId: data.unitId || null,
-          tenantId: tenant.id,
-          submittedById: user.id,
-          title: data.title,
-          description: data.description,
-          category: data.category as any,
-          priority: (data.priority as any) || "MEDIUM",
-          status: "NEW",
-        },
-      });
-
-      await tx.workOrder.create({
-        data: {
-          organizationId: ctx.organizationId,
-          maintenanceRequestId: request.id,
-          workOrderNumber: `WO-${String(count + 1).padStart(4, "0")}`,
-          title: data.title,
-          description: data.description,
-          status: "NEW",
-        },
-      });
-
-      await tx.workOrderActivity.create({
-        data: {
-          organizationId: ctx.organizationId,
-          workOrderId: request.id,
-          actorId: user.id,
-          action: "CREATED",
-          toValue: "NEW",
-        },
-      });
-
-      return request;
+    const request = await MaintenanceRequestService.create(ctx.organizationId, user.id, {
+      propertyId: data.propertyId,
+      unitId: data.unitId || null,
+      tenantId: tenant.id,
+      title: data.title,
+      description: data.description,
+      category: data.category,
+      priority: data.priority,
     });
 
-    return NextResponse.json(result, { status: 201 });
+    return NextResponse.json(request, { status: 201 });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: "Validation error", issues: error.issues }, { status: 400 });
-    }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Internal server error" }, { status: 500 });
+    const { error: errorMessage, statusCode, issues } = handleApiError(error);
+    return NextResponse.json({ error: errorMessage, ...(issues ? { issues } : {}) }, { status: statusCode });
   }
 }

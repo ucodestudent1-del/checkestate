@@ -74,23 +74,44 @@ function getCSP(nonce: string): string {
     `font-src 'self' https://fonts.gstatic.com`,
     `img-src 'self' data: https:`,
     `connect-src 'self' https://api.stripe.com https://api.resend.com`,
-    `frame-src https://js.stripe.com https://hooks.stripe.com`,
+    `frame-src https://js.stripe.com https://hooks.stripe.com https://api.stripe.com`,
     `base-uri 'self'`,
     `form-action 'self'`,
   ].join("; ");
 }
 
-export const middleware = auth((req) => {
+export const middleware = auth(async (req) => {
   const { pathname } = req.nextUrl;
   const isAuthenticated = !!req.auth;
   const nonce = crypto.randomUUID();
   const ip = (req as any).ip ?? req.headers.get("x-forwarded-for") ?? "unknown";
 
-  // Allow auth pages and API auth routes
+  // Apply rate limiting to auth endpoints
   if (pathname.startsWith("/auth") || pathname.startsWith("/api/auth")) {
+    const { allowed, remaining } = await rateLimit(
+      `auth:${ip}`,
+      AUTH_RATE_LIMIT_MAX,
+      AUTH_RATE_LIMIT_WINDOW
+    );
+
     const response = NextResponse.next();
     response.headers.set("X-Content-Type-Options", "nosniff");
     response.headers.set("X-Frame-Options", "DENY");
+    response.headers.set("X-RateLimit-Limit", AUTH_RATE_LIMIT_MAX.toString());
+    response.headers.set("X-RateLimit-Remaining", remaining.toString());
+
+    if (!allowed) {
+      return new NextResponse(JSON.stringify({ error: "Too many requests" }), {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "X-RateLimit-Limit": AUTH_RATE_LIMIT_MAX.toString(),
+          "X-RateLimit-Remaining": "0",
+          "Retry-After": Math.ceil(AUTH_RATE_LIMIT_WINDOW / 1000).toString(),
+        },
+      });
+    }
+
     return response;
   }
 
@@ -108,6 +129,23 @@ export const middleware = auth((req) => {
 
   // Add CSP
   response.headers.set("Content-Security-Policy", getCSP(nonce));
+
+  // Apply general rate limiting
+  const { allowed, remaining } = await rateLimit(`api:${ip}`);
+  response.headers.set("X-RateLimit-Limit", RATE_LIMIT_MAX.toString());
+  response.headers.set("X-RateLimit-Remaining", remaining.toString());
+
+  if (!allowed) {
+    return new NextResponse(JSON.stringify({ error: "Too many requests" }), {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "X-RateLimit-Limit": RATE_LIMIT_MAX.toString(),
+        "X-RateLimit-Remaining": "0",
+        "Retry-After": Math.ceil(RATE_LIMIT_WINDOW / 1000).toString(),
+      },
+    });
+  }
 
   return response;
 });

@@ -20,12 +20,26 @@ export async function requireOrganization() {
   if (!user.organizationId) {
     throw new Error("No organization associated with user");
   }
+  
+  // Verify user is actually a member of the organization
+  const membership = await db.organizationMember.findFirst({
+    where: {
+      userId: user.id,
+      organizationId: user.organizationId,
+      isActive: true,
+    },
+  });
+  
+  if (!membership) {
+    throw new Error("User is not a member of this organization");
+  }
+  
   return {
     userId: user.id,
     organizationId: user.organizationId,
     role: user.role,
-    organizationRole: user.organizationRole,
-    isOrganizationOwner: user.isOrganizationOwner,
+    organizationRole: membership.role,
+    isOrganizationOwner: membership.isOwner,
   };
 }
 

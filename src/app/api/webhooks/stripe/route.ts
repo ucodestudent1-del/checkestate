@@ -9,7 +9,10 @@ function getStripe() {
   return new Stripe(secretKey, { apiVersion: "2025-06-30.basil" as any });
 }
 
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
+const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+if (!webhookSecret && process.env.NODE_ENV === "production") {
+  throw new Error("STRIPE_WEBHOOK_SECRET is required in production");
+}
 
 export async function POST(req: NextRequest) {
   const stripe = getStripe();
@@ -20,15 +23,30 @@ export async function POST(req: NextRequest) {
   let event: Stripe.Event;
 
   try {
-    event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
+    event = stripe.webhooks.constructEvent(body, signature, webhookSecret || "");
   } catch (err) {
     return NextResponse.json({ error: "Webhook signature verification failed" }, { status: 400 });
   }
 
-  // Idempotency check
-  const existing = await db.emailLog.findFirst({ where: { idempotencyKey: `stripe:${event.id}` } });
-  if (existing) {
-    return NextResponse.json({ received: true });
+  // Idempotency check using dedicated WebhookEvent table
+  const existingEvent = await db.webhookEvent.findUnique({
+    where: { eventId: event.id },
+  });
+
+  if (existingEvent) {
+    if (existingEvent.processedAt) {
+      return NextResponse.json({ received: true });
+    }
+    // If exists but not processed, continue processing
+  } else {
+    // Create webhook event record
+    await db.webhookEvent.create({
+      data: {
+        eventId: event.id,
+        eventType: event.type,
+        payload: event.data.object as any,
+      },
+    });
   }
 
   try {
@@ -83,12 +101,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    await db.emailLog.create({
-      data: { to: "system", template: "stripe-webhook", subject: event.type, status: "SENT", idempotencyKey: `stripe:${event.id}` },
+    // Mark webhook event as processed
+    await db.webhookEvent.update({
+      where: { eventId: event.id },
+      data: { processedAt: new Date() },
     });
 
     return NextResponse.json({ received: true });
   } catch (err) {
+    // Mark webhook event as failed
+    await db.webhookEvent.update({
+      where: { eventId: event.id },
+      data: { error: err instanceof Error ? err.message : "Unknown error" },
+    });
     return NextResponse.json({ error: "Webhook handler error" }, { status: 500 });
   }
 }

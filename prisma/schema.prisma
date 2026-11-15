@@ -133,6 +133,8 @@ model Organization {
   unitLimit         Int      @default(10)
   aiUsageLimit      Int      @default(0)
   aiUsageCount      Int      @default(0)
+  maintenanceRequestSequence Int   @default(0)
+  workOrderSequence Int   @default(0)
   trialEndsAt       DateTime?
   isActive          Boolean  @default(true)
   settings          Json     @default("{}")
@@ -188,14 +190,15 @@ model SubscriptionPlan {
   planType     PlanType
   name         String
   description  String?
-  priceMonthly Int
-  priceYearly  Int
+  priceMonthly Int         @db.Decimal(10, 2)
+  priceYearly  Int         @db.Decimal(10, 2)
   unitLimit    Int
   features     Json        @default("{}")
   aiUsageLimit Int         @default(0)
   isActive     Boolean     @default(true)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
+  deletedAt    DateTime?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
@@ -216,6 +219,7 @@ model Property {
   photoUrls    String[] @default([])
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   units        Unit[]
@@ -225,6 +229,7 @@ model Property {
   @@index([organizationId])
   @@index([city])
   @@index([propertyType])
+  @@index([organizationId, deletedAt])
 }
 
 model Unit {
@@ -239,6 +244,7 @@ model Unit {
   status       String   @default("VACANT")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
@@ -250,6 +256,7 @@ model Unit {
   @@index([organizationId])
   @@index([propertyId])
   @@index([unitNumber])
+  @@index([organizationId, deletedAt])
 }
 
 model Tenant {
@@ -265,6 +272,7 @@ model Tenant {
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   unit         Unit?    @relation(fields: [unitId], references: [id], onDelete: SetNull)
@@ -273,6 +281,7 @@ model Tenant {
   @@index([organizationId])
   @@index([unitId])
   @@index([email])
+  @@index([organizationId, deletedAt])
 }
 
 model TenantInvitation {
@@ -312,6 +321,7 @@ model Contractor {
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   documents    ContractorDocument[]
@@ -322,6 +332,7 @@ model Contractor {
   @@index([organizationId])
   @@index([email])
   @@index([tradeSpecialization])
+  @@index([organizationId, deletedAt])
 }
 
 model ContractorDocument {
@@ -332,10 +343,12 @@ model ContractorDocument {
   documentType String
   expiresAt    DateTime?
   uploadedAt   DateTime @default(now())
+  deletedAt    DateTime?
 
   contractor   Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
 
   @@index([contractorId])
+  @@index([contractorId, deletedAt])
 }
 
 model MaintenanceRequest {
@@ -353,14 +366,15 @@ model MaintenanceRequest {
   submittedAt  DateTime @default(now())
   status       WorkOrderStatus @default(NEW)
   assignedContractorId String?
-  estimatedCost Decimal?
-  approvedCost Decimal?
-  actualCost Decimal?
+  estimatedCost Decimal? @db.Decimal(10, 2)
+  approvedCost Decimal? @db.Decimal(10, 2)
+  actualCost Decimal? @db.Decimal(10, 2)
   appointmentDate DateTime?
   completionDate DateTime?
   internalNotes String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
 
   organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   property         Property   @relation(fields: [propertyId], references: [id])
@@ -379,6 +393,8 @@ model MaintenanceRequest {
   @@index([propertyId])
   @@index([unitId])
   @@index([tenantId])
+  @@index([organizationId, status, priority])
+  @@index([organizationId, status, category])
 }
 
 model WorkOrder {
@@ -394,6 +410,7 @@ model WorkOrder {
   completedDate      DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+  deletedAt          DateTime?
 
   organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   maintenanceRequest MaintenanceRequest @relation(fields: [maintenanceRequestId], references: [id], onDelete: Cascade)
@@ -408,6 +425,7 @@ model WorkOrder {
   @@index([workOrderNumber])
   @@index([status])
   @@index([maintenanceRequestId])
+  @@index([organizationId, status, assignedToId])
 }
 
 model WorkOrderAssignment {
@@ -502,9 +520,9 @@ model MaintenanceExpense {
   title        String
   description  String?
   category     MaintenanceCategory
-  estimatedCost Decimal?
-  approvedCost Decimal?
-  actualCost   Decimal
+  estimatedCost Decimal? @db.Decimal(10, 2)
+  approvedCost Decimal? @db.Decimal(10, 2)
+  actualCost   Decimal  @db.Decimal(10, 2)
   invoiceNumber String?
   receiptUrl   String?
   expenseDate  DateTime
@@ -512,6 +530,7 @@ model MaintenanceExpense {
   paymentStatus String   @default("UNPAID")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
 
   organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   property         Property?   @relation(fields: [propertyId], references: [id], onDelete: SetNull)
@@ -526,6 +545,7 @@ model MaintenanceExpense {
   @@index([category])
   @@index([expenseDate])
   @@index([paymentStatus])
+  @@index([organizationId, expenseDate])
 }
 
 model Notification {
@@ -570,6 +590,7 @@ model AuditLog {
   @@index([action])
   @@index([entityType])
   @@index([createdAt])
+  @@index([organizationId, entityType, entityId])
 }
 
 model AiUsageRecord {
@@ -604,6 +625,21 @@ model EmailLog {
   @@index([organizationId])
   @@index([idempotencyKey])
   @@index([status])
+}
+
+model WebhookEvent {
+  id            String   @id @default(cuid())
+  provider      String   @default("stripe")
+  eventId       String   @unique
+  eventType     String
+  payload       Json
+  processedAt   DateTime?
+  error         String?
+  createdAt     DateTime @default(now())
+
+  @@index([provider])
+  @@index([eventType])
+  @@index([processedAt])
 }
 
 model VerificationToken {

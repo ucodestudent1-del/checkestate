@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOrganization } from "@/lib/session";
-import { db } from "@/lib/db";
+import { db, Prisma } from "@/lib/db";
+import { withErrorHandler } from "@/lib/api-middleware";
 import { handleApiError } from "@/lib/errors";
 
 const unitSchema = z.object({
@@ -14,81 +15,74 @@ const unitSchema = z.object({
   status: z.string().optional(),
 });
 
-export async function GET(req: NextRequest) {
-  try {
-    const { organizationId } = await requireOrganization();
-    const { searchParams } = new URL(req.url);
-    const page = parseInt(searchParams.get("page") || "1");
-    const pageSize = parseInt(searchParams.get("pageSize") || "10");
-    const search = searchParams.get("search") || "";
-    const propertyId = searchParams.get("propertyId") || undefined;
+const GET = withErrorHandler(async (req: NextRequest) => {
+  const { organizationId } = await requireOrganization();
+  const { searchParams } = new URL(req.url);
+  const page = parseInt(searchParams.get("page") || "1");
+  const pageSize = parseInt(searchParams.get("pageSize") || "10");
+  const search = searchParams.get("search") || "";
+  const propertyId = searchParams.get("propertyId") || undefined;
 
-    const where = {
+  const where: Prisma.UnitWhereInput = {
+    organizationId,
+    deletedAt: null,
+    ...(propertyId ? { propertyId } : {}),
+    ...(search
+      ? { unitNumber: { contains: search, mode: "insensitive" as const } }
+      : {}),
+  };
+
+  const [units, total] = await Promise.all([
+    db.unit.findMany({
+      where,
+      include: { property: true, tenant: true },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    db.unit.count({ where }),
+  ]);
+
+  return NextResponse.json({
+    data: units,
+    total,
+    page,
+    pageSize,
+    totalPages: Math.ceil(total / pageSize),
+  });
+});
+
+const POST = withErrorHandler(async (req: NextRequest) => {
+  const { organizationId } = await requireOrganization();
+  const body = await req.json();
+  const data = unitSchema.parse(body);
+
+  const org = await db.organization.findUnique({
+    where: { id: organizationId },
+    select: { unitLimit: true, _count: { select: { units: true } } },
+  });
+
+  if (org && org._count.units >= org.unitLimit) {
+    return NextResponse.json(
+      { error: `Unit limit reached. Your plan allows up to ${org.unitLimit} units.` },
+      { status: 403 }
+    );
+  }
+
+  const unit = await db.unit.create({
+    data: {
       organizationId,
-      ...(propertyId ? { propertyId } : {}),
-      ...(search
-        ? { unitNumber: { contains: search, mode: "insensitive" as const } }
-        : {}),
-    };
+      propertyId: data.propertyId,
+      unitNumber: data.unitNumber,
+      floor: data.floor ? parseInt(data.floor) : null,
+      bedrooms: data.bedrooms ? parseInt(data.bedrooms) : null,
+      bathrooms: data.bathrooms ? parseInt(data.bathrooms) : null,
+      squareFeet: data.squareFeet ? parseInt(data.squareFeet) : null,
+      status: data.status || "VACANT",
+    },
+  });
 
-    const [units, total] = await Promise.all([
-      db.unit.findMany({
-        where,
-        include: { property: true, tenant: true },
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-      db.unit.count({ where }),
-    ]);
+  return NextResponse.json(unit, { status: 201 });
+});
 
-    return NextResponse.json({
-      data: units,
-      total,
-      page,
-      pageSize,
-      totalPages: Math.ceil(total / pageSize),
-    });
-  } catch (err) {
-    const { error, statusCode, issues } = handleApiError(err);
-    return NextResponse.json({ error, ...(issues ? { issues } : {}) }, { status: statusCode });
-  }
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    const { organizationId } = await requireOrganization();
-    const body = await req.json();
-    const data = unitSchema.parse(body);
-
-    const org = await db.organization.findUnique({
-      where: { id: organizationId },
-      select: { unitLimit: true, _count: { select: { units: true } } },
-    });
-
-    if (org && org._count.units >= org.unitLimit) {
-      return NextResponse.json(
-        { error: `Unit limit reached. Your plan allows up to ${org.unitLimit} units.` },
-        { status: 403 }
-      );
-    }
-
-    const unit = await db.unit.create({
-      data: {
-        organizationId,
-        propertyId: data.propertyId,
-        unitNumber: data.unitNumber,
-        floor: data.floor ? parseInt(data.floor) : null,
-        bedrooms: data.bedrooms ? parseInt(data.bedrooms) : null,
-        bathrooms: data.bathrooms ? parseInt(data.bathrooms) : null,
-        squareFeet: data.squareFeet ? parseInt(data.squareFeet) : null,
-        status: data.status || "VACANT",
-      },
-    });
-
-    return NextResponse.json(unit, { status: 201 });
-  } catch (err) {
-    const { error, statusCode, issues } = handleApiError(err);
-    return NextResponse.json({ error, ...(issues ? { issues } : {}) }, { status: statusCode });
-  }
-}
+export { GET, POST };

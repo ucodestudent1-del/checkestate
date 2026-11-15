@@ -1,5 +1,48 @@
-import { db } from "@/lib/db";
+import { db, Prisma } from "@/lib/db";
 import { AppError, NotFoundError, ForbiddenError, ValidationError } from "@/lib/errors";
+import { logCreate, logUpdate, logStatusChange } from "@/lib/audit";
+import { MaintenanceCategory, Priority, WorkOrderStatus } from "@prisma/client";
+
+const WORK_ORDER_MANAGEMENT_ROLES = ["PROPERTY_OWNER", "PROPERTY_MANAGER", "MAINTENANCE_STAFF", "SUPER_ADMIN"];
+
+async function assertCanManageWorkOrders(userId: string, organizationId: string, workOrderId: string) {
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    include: {
+      memberships: {
+        where: { organizationId, isActive: true },
+        include: { organization: true },
+      },
+      workOrderAssignments: {
+        where: { workOrderId },
+        include: { contractor: true },
+      },
+    },
+  });
+
+  if (!user) {
+    throw new ForbiddenError("User not found");
+  }
+
+  const membership = user.memberships[0];
+  const isContractorAssigned = user.workOrderAssignments.length > 0;
+
+  const hasManagementRole = membership && WORK_ORDER_MANAGEMENT_ROLES.includes(membership.role);
+  const isOrgOwner = membership?.isOwner === true;
+  const isSuperAdmin = user.role === "SUPER_ADMIN";
+
+  if (!isSuperAdmin && !isOrgOwner && !hasManagementRole && !isContractorAssigned) {
+    throw new ForbiddenError("Insufficient permissions to update work order");
+  }
+
+  // Contractors can only update status to specific values
+  if (isContractorAssigned && !hasManagementRole && !isOrgOwner && !isSuperAdmin) {
+    const allowedContractorStatuses = ["IN_PROGRESS", "WAITING_FOR_PARTS", "COMPLETED"];
+    // This will be checked by the caller for status changes
+  }
+
+  return { membership, isContractorAssigned, isOrgOwner, isSuperAdmin };
+}
 
 export interface MaintenanceRequestFilters {
   status?: string;
@@ -25,10 +68,10 @@ export class MaintenanceRequestService {
     const { page = 1, pageSize = 10 } = pagination;
     const { status, priority, search, propertyId, unitId, tenantId, category } = filters;
 
-    const where: any = { organizationId };
-    if (status) where.status = status;
-    if (priority) where.priority = priority;
-    if (category) where.category = category;
+    const where: Prisma.MaintenanceRequestWhereInput = { organizationId, deletedAt: null };
+    if (status) where.status = status as WorkOrderStatus;
+    if (priority) where.priority = priority as Priority;
+    if (category) where.category = category as MaintenanceCategory;
     if (propertyId) where.propertyId = propertyId;
     if (unitId) where.unitId = unitId;
     if (tenantId) where.tenantId = tenantId;
@@ -73,10 +116,15 @@ export class MaintenanceRequestService {
       priority?: string;
     }
   ) {
-    const count = await db.maintenanceRequest.count({ where: { organizationId } });
-    const requestNumber = `WR-${String(count + 1).padStart(4, "0")}`;
-
     return await db.$transaction(async (tx) => {
+      const org = await tx.organization.update({
+        where: { id: organizationId },
+        data: { maintenanceRequestSequence: { increment: 1 } },
+        select: { maintenanceRequestSequence: true },
+      });
+
+      const requestNumber = `WR-${String(org.maintenanceRequestSequence).padStart(4, "0")}`;
+
       const request = await tx.maintenanceRequest.create({
         data: {
           organizationId,
@@ -87,9 +135,9 @@ export class MaintenanceRequestService {
           submittedById: userId,
           title: data.title,
           description: data.description,
-          category: data.category as any,
-          priority: (data.priority as any) || "MEDIUM",
-          status: "NEW",
+          category: data.category as MaintenanceCategory,
+          priority: (data.priority as Priority) || "MEDIUM",
+          status: "NEW" as WorkOrderStatus,
         },
       });
 
@@ -97,7 +145,7 @@ export class MaintenanceRequestService {
         data: {
           organizationId,
           maintenanceRequestId: request.id,
-          workOrderNumber: `WO-${String(count + 1).padStart(4, "0")}`,
+          workOrderNumber: `WO-${String(org.maintenanceRequestSequence).padStart(4, "0")}`,
           title: data.title,
           description: data.description,
           status: "NEW",
@@ -113,6 +161,47 @@ export class MaintenanceRequestService {
           toValue: "NEW",
         },
       });
+
+      // Audit log for maintenance request creation
+      await tx.auditLog.create({
+        data: {
+          organizationId,
+          userId,
+          action: "CREATE",
+          entityType: "MaintenanceRequest",
+          entityId: request.id,
+          newValues: {
+            requestNumber,
+            propertyId: data.propertyId,
+            unitId: data.unitId,
+            tenantId: data.tenantId,
+            title: data.title,
+            category: data.category,
+            priority: data.priority || "MEDIUM",
+            status: "NEW",
+          },
+        },
+      });
+
+      // Audit log for work order creation
+      const workOrder = await tx.workOrder.findUnique({ where: { maintenanceRequestId: request.id } });
+      if (workOrder) {
+        await tx.auditLog.create({
+          data: {
+            organizationId,
+            userId,
+            action: "CREATE",
+            entityType: "WorkOrder",
+            entityId: workOrder.id,
+            newValues: {
+              workOrderNumber: workOrder.workOrderNumber,
+              maintenanceRequestId: request.id,
+              title: data.title,
+              status: "NEW",
+            },
+          },
+        });
+      }
 
       return request;
     });
@@ -141,8 +230,8 @@ export class WorkOrderService {
     const { page = 1, pageSize = 10 } = pagination;
     const { status, search } = filters;
 
-    const where: any = { organizationId };
-    if (status) where.status = status;
+    const where: Prisma.WorkOrderWhereInput = { organizationId, deletedAt: null };
+    if (status) where.status = status as WorkOrderStatus;
     if (search) {
       where.OR = [
         { title: { contains: search, mode: "insensitive" } },
@@ -211,28 +300,108 @@ export class WorkOrderService {
       throw new NotFoundError("Work order not found");
     }
 
-    const updateData: any = { ...data };
+    // Check permissions
+    const { isContractorAssigned, isOrgOwner, isSuperAdmin, membership } = await assertCanManageWorkOrders(userId, organizationId, id);
+
+    // Contractors can only update status, not reassign or schedule
+    if (isContractorAssigned && !isOrgOwner && !isSuperAdmin && !membership) {
+      const allowedFields = ["status"];
+      const requestedFields = Object.keys(data);
+      const hasDisallowedFields = requestedFields.some(f => !allowedFields.includes(f));
+      if (hasDisallowedFields) {
+        throw new ForbiddenError("Contractors can only update work order status");
+      }
+
+      // Contractors can only transition to specific statuses
+      if (data.status) {
+        const allowedContractorStatuses = ["IN_PROGRESS", "WAITING_FOR_PARTS", "COMPLETED"];
+        if (!allowedContractorStatuses.includes(data.status)) {
+          throw new ForbiddenError(`Contractors cannot set status to ${data.status}`);
+        }
+      }
+    }
+
+    const updateData: Prisma.WorkOrderUpdateInput = { ...data };
     if (data.scheduledDate) updateData.scheduledDate = new Date(data.scheduledDate);
     if (data.completedDate) updateData.completedDate = new Date(data.completedDate);
 
-    const updated = await db.workOrder.update({ where: { id }, data: updateData });
+    const updated = await db.$transaction(async (tx) => {
+      const result = await tx.workOrder.update({ where: { id }, data: updateData });
 
-    if (data.status && data.status !== workOrder.status) {
-      await db.workOrderActivity.create({
-        data: {
-          organizationId,
-          workOrderId: id,
-          actorId: userId,
-          action: "STATUS_CHANGED",
-          fromValue: workOrder.status,
-          toValue: data.status,
-        },
-      });
-      await db.maintenanceRequest.update({
-        where: { id: workOrder.maintenanceRequestId },
-        data: { status: data.status as any },
-      });
-    }
+      // Audit log for work order update
+      const oldValues: Record<string, unknown> = {};
+      const newValues: Record<string, unknown> = {};
+
+      if (data.status && data.status !== workOrder.status) {
+        oldValues.status = workOrder.status;
+        newValues.status = data.status;
+
+        await tx.workOrderActivity.create({
+          data: {
+            organizationId,
+            workOrderId: id,
+            actorId: userId,
+            action: "STATUS_CHANGED",
+            fromValue: workOrder.status,
+            toValue: data.status,
+          },
+        });
+
+        await tx.maintenanceRequest.update({
+          where: { id: workOrder.maintenanceRequestId },
+          data: { status: data.status as WorkOrderStatus },
+        });
+
+        // Audit log for maintenance request status change
+        await tx.auditLog.create({
+          data: {
+            organizationId,
+            userId,
+            action: "STATUS_CHANGE",
+            entityType: "MaintenanceRequest",
+            entityId: workOrder.maintenanceRequestId,
+            oldValues: { status: workOrder.status },
+            newValues: { status: data.status },
+          },
+        });
+      }
+
+      if (data.assignedToId && data.assignedToId !== workOrder.assignedToId) {
+        oldValues.assignedToId = workOrder.assignedToId;
+        newValues.assignedToId = data.assignedToId;
+      }
+
+      if (data.scheduledDate) {
+        oldValues.scheduledDate = workOrder.scheduledDate;
+        newValues.scheduledDate = data.scheduledDate;
+      }
+
+      if (data.completedDate) {
+        oldValues.completedDate = workOrder.completedDate;
+        newValues.completedDate = data.completedDate;
+      }
+
+      if (data.description && data.description !== workOrder.description) {
+        oldValues.description = workOrder.description;
+        newValues.description = data.description;
+      }
+
+      if (Object.keys(newValues).length > 0) {
+        await tx.auditLog.create({
+          data: {
+            organizationId,
+            userId,
+            action: "UPDATE",
+            entityType: "WorkOrder",
+            entityId: id,
+            oldValues,
+            newValues,
+          },
+        });
+      }
+
+      return result;
+    });
 
     return updated;
   }

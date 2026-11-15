@@ -16,11 +16,14 @@ export function withErrorHandler(
     logger.setContext({ requestId });
 
     try {
+      // Get session once for both CSRF and context
+      const session = await auth();
+      const userId = session?.user?.id;
+      const organizationId = (session?.user as any)?.organizationId;
+
       // CSRF validation for mutation methods
       if (MUTATION_METHODS.has(req.method)) {
-        const session = await auth();
-        const sessionId = session?.user?.id;
-        const csrfResult = validateCsrfRequest(req.headers, sessionId);
+        const csrfResult = validateCsrfRequest(req.headers, userId);
 
         if (!csrfResult.valid) {
           logger.warn("CSRF validation failed", {
@@ -35,11 +38,7 @@ export function withErrorHandler(
         }
       }
 
-      const session = await auth();
-      const context = {
-        userId: session?.user?.id,
-        organizationId: (session?.user as any)?.organizationId,
-      };
+      const context = { userId, organizationId };
 
       const response = await handler(req, context);
       const duration = Date.now() - startTime;
