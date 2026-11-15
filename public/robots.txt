@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+
+Disallow: /api/
+Disallow: /auth/
+Disallow: /dashboard/
+Disallow: /tenant/
+Disallow: /contractor/
+Disallow: /_next/
+Disallow: /_vercel/
+
+Sitemap: https://checkestate.app/sitemap.xml
