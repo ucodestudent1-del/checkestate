@@ -4,11 +4,12 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { signOut } from "next-auth/react";
-import { Home, FileText, Mail, Settings, LogOut, Building, Wrench, Calendar } from "lucide-react";
+import { Home, FileText, Mail, Settings, LogOut, Building, Wrench, Calendar, File, ClipboardList } from "lucide-react";
 
 const navigation = [
   { name: "Dashboard", href: "/contractor/dashboard", icon: Home },
-  { name: "My Work Orders", href: "/contractor/work-orders", icon: FileText },
+  { name: "My Work Orders", href: "/contractor/work-orders", icon: ClipboardList },
+  { name: "Documents", href: "/contractor/documents", icon: File },
 ];
 
 export default function ContractorLayout({
@@ -60,7 +61,7 @@ export default function ContractorLayout({
               onClick={() => signOut({ callbackUrl: "/contractor/login" })}
               className="text-slate-400 hover:text-red-600"
             >
-              <span className="h-5 w-5">↩</span>
+              <LogOut className="h-5 w-5" />
             </button>
           </div>
         </div>

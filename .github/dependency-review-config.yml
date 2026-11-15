@@ -1,0 +1,47 @@
+# Dependency Review Configuration
+# This file configures the dependency review action
+
+# Severity levels that will fail the build
+fail-on-severity: high
+
+# Allow specific vulnerabilities that have been reviewed and accepted
+allow-list:
+  # Example: Allow a specific CVE that has been assessed as non-exploitable
+  # - CVE-2023-XXXX
+
+# Scope of dependencies to check
+# "production" = only production dependencies
+# "development" = only dev dependencies
+# "all" = both (default)
+scope: "all"
+
+# Ignore specific packages entirely
+ignore-packages:
+  # Example: Ignore a package with known issues that won't be fixed
+  # - package-name
+
+# Configuration for license checking
+license:
+  # Fail on these license types
+  fail-on:
+    - GPL-3.0
+    - AGPL-3.0
+    - SSPL-1.0
+  # Allow these license types
+  allow:
+    - MIT
+    - Apache-2.0
+    - BSD-2-Clause
+    - BSD-3-Clause
+    - ISC
+    - CC0-1.0
+    - Unlicense
+    - Zlib
+    - Python-2.0
+
+# Configuration for outdated dependencies
+outdated:
+  # Warn on dependencies more than this many versions behind
+  warn-on-versions-behind: 5
+  # Fail on dependencies more than this many versions behind
+  fail-on-versions-behind: 10

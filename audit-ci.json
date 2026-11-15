@@ -1,0 +1,10 @@
+{
+  "moderate": false,
+  "high": true,
+  "critical": true,
+  "registry": "https://registry.npmjs.org/",
+  "ignore": [
+    "CVE-2023-XXXXX"
+  ],
+  "allowlist": []
+}
