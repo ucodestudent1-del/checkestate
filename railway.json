@@ -1,0 +1,14 @@
+{
+  "build": {
+    "buildCommand": "npm run build",
+    "startCommand": "npm start",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "startCommand": "npm start",
+    "healthcheckPath": "/api/health",
+    "healthcheckTimeout": 60,
+    "restartPolicyType": "on_failure",
+    "restartPolicyMaxRetries": 10
+  }
+}
