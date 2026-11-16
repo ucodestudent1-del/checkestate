@@ -43,9 +43,12 @@ const PATCH = withErrorHandler(async (req: NextRequest, { params }: { params: Pr
   const body = await req.json();
   const data = updatePropertySchema.parse(body);
 
+  // Explicitly exclude organizationId from updatable fields to prevent org ownership change
+  const { organizationId: _, ...updateData } = data as { organizationId?: string };
+
   const property = await db.property.update({
     where: { id },
-    data: { ...data, organizationId },
+    data: { ...updateData, organizationId },
   });
 
   return NextResponse.json(property);

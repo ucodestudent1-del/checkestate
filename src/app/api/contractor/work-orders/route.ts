@@ -105,7 +105,7 @@ const PATCH = withErrorHandler(async (req: NextRequest) => {
   const body = await req.json();
   const data = updateContractorWorkOrderSchema.parse(body);
 
-  const allowedContractorStatuses = ["IN_PROGRESS", "WAITING_FOR_PARTS", "COMPLETED"];
+  const allowedContractorStatuses = ["IN_PROGRESS", "WAITING_FOR_PARTS", "COMPLETED", "SCHEDULED"];
   if (data.status && !allowedContractorStatuses.includes(data.status)) {
     return NextResponse.json({ error: "Invalid status transition for contractor" }, { status: 400 });
   }

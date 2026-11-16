@@ -72,7 +72,7 @@ export async function PATCH(req: NextRequest) {
     if (!id) return NextResponse.json({ error: "Notification ID required" }, { status: 400 });
 
     const notification = await db.notification.update({
-      where: { id },
+      where: { id, organizationId },
       data: { isRead: true, readAt: new Date() },
     });
     return NextResponse.json(notification);

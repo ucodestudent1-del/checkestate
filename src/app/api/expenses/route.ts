@@ -12,7 +12,7 @@ const expenseSchema = z.object({
   contractorId: z.string().optional(),
   title: z.string().min(1, "Title is required"),
   description: z.string().optional(),
-  category: z.string().min(1, "Category is required"),
+  category: z.enum(["PLUMBING", "ELECTRICAL", "HVAC", "APPLIANCE", "PEST_CONTROL", "CLEANING", "LANDSCAPING", "PAINTING", "CARPENTRY", "ROOFING", "SECURITY", "OTHER"]),
   estimatedCost: z.string().optional(),
   approvedCost: z.string().optional(),
   actualCost: z.string().min(1, "Actual cost is required"),

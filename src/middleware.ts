@@ -120,6 +120,16 @@ export const middleware = auth(async (req) => {
     return NextResponse.redirect(new URL("/auth/login", req.url));
   }
 
+  // Require email verification for protected pages
+  if (
+    !req.auth?.user?.emailVerified &&
+    !pathname.startsWith("/auth") &&
+    !pathname.startsWith("/api/auth") &&
+    pathname !== "/auth/verify-email"
+  ) {
+    return NextResponse.redirect(new URL("/auth/verify-email", req.url));
+  }
+
   const response = NextResponse.next();
 
   // Add security headers

@@ -6,6 +6,8 @@ import { handleApiError } from "@/lib/errors";
 const BUCKET = process.env.S3_BUCKET || "checkestate-uploads";
 const REGION = process.env.S3_REGION || "us-east-1";
 const ENDPOINT = process.env.S3_ENDPOINT || undefined;
+const ACCESS_KEY = process.env.S3_ACCESS_KEY_ID || "";
+const SECRET_KEY = process.env.S3_SECRET_ACCESS_KEY || "";
 
 interface GeneratePresignedUrlRequest {
   fileName: string;
@@ -44,24 +46,49 @@ function getBaseUrl() {
 }
 
 function validateFileName(fileName: string, mimeType: string): { valid: boolean; error?: string } {
-  // Check for path traversal
   if (fileName.includes("..") || fileName.includes("/") || fileName.includes("\\")) {
     return { valid: false, error: "Invalid file name" };
   }
 
-  // Check extension
   const ext = fileName.toLowerCase().substring(fileName.lastIndexOf("."));
   if (!ext || !ALLOWED_EXTENSIONS.includes(ext as any)) {
     return { valid: false, error: "File extension not allowed" };
   }
 
-  // Verify extension matches MIME type
   const allowedExts = MIME_TO_EXTENSIONS[mimeType];
   if (!allowedExts || !allowedExts.includes(ext as any)) {
     return { valid: false, error: "File extension does not match MIME type" };
   }
 
   return { valid: true };
+}
+
+async function generatePresignedUrl(key: string, fileType: string): Promise<string> {
+  if (!ACCESS_KEY || !SECRET_KEY) {
+    throw new Error("S3 credentials not configured");
+  }
+
+  const { S3Client } = await import("@aws-sdk/client-s3");
+  const { getSignedUrl } = await import("@aws-sdk/s3-request-presigner");
+  const { PutObjectCommand } = await import("@aws-sdk/client-s3");
+
+  const s3 = new S3Client({
+    region: REGION,
+    endpoint: ENDPOINT || undefined,
+    credentials: {
+      accessKeyId: ACCESS_KEY,
+      secretAccessKey: SECRET_KEY,
+    },
+    ...(ENDPOINT ? { forcePathStyle: true } : {}),
+  });
+
+  const command = new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    ContentType: fileType,
+  });
+
+  return getSignedUrl(s3, command, { expiresIn: 300 });
 }
 
 export async function POST(req: NextRequest) {
@@ -85,12 +112,28 @@ export async function POST(req: NextRequest) {
 
     const key = `${folder}/${crypto.randomBytes(16).toString("hex")}-${fileName}`;
 
+    let uploadUrl: string;
+    let requiresSignature = false;
+
+    if (ACCESS_KEY && SECRET_KEY) {
+      try {
+        uploadUrl = await generatePresignedUrl(key, fileType);
+        requiresSignature = true;
+      } catch {
+        // Fall back to direct URL if signing fails
+        uploadUrl = `${getBaseUrl()}/${key}`;
+      }
+    } else {
+      uploadUrl = `${getBaseUrl()}/${key}`;
+      requiresSignature = false;
+    }
+
     return NextResponse.json({
-      uploadUrl: `${getBaseUrl()}/${key}`,
+      uploadUrl,
       fileUrl: `${getBaseUrl()}/${key}`,
       key,
       expiresIn: 300,
-      requiresSignature: !!process.env.S3_ACCESS_KEY_ID,
+      requiresSignature,
       maxFileSize: MAX_FILE_SIZE,
     });
   } catch (err) {
@@ -125,7 +168,32 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Invalid file key" }, { status: 400 });
     }
 
-    return NextResponse.json({ message: "File deletion queued" });
+    // Attempt actual deletion if S3 is configured
+    if (ACCESS_KEY && SECRET_KEY) {
+      try {
+        const { S3Client } = await import("@aws-sdk/client-s3");
+        const { DeleteObjectCommand } = await import("@aws-sdk/client-s3");
+
+        const s3 = new S3Client({
+          region: REGION,
+          endpoint: ENDPOINT || undefined,
+          credentials: {
+            accessKeyId: ACCESS_KEY,
+            secretAccessKey: SECRET_KEY,
+          },
+          ...(ENDPOINT ? { forcePathStyle: true } : {}),
+        });
+
+        await s3.send(new DeleteObjectCommand({
+          Bucket: BUCKET,
+          Key: key,
+        }));
+      } catch {
+        // Ignore deletion errors - file may not exist
+      }
+    }
+
+    return NextResponse.json({ message: "File deleted" });
   } catch (err) {
     const { error, statusCode, issues } = handleApiError(err);
     return NextResponse.json({ error, ...(issues ? { issues } : {}) }, { status: statusCode });

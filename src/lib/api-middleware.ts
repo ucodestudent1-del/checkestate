@@ -8,7 +8,7 @@ import { auth } from "@/lib/auth";
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export function withErrorHandler(
-  handler: (req: NextRequest, context: { userId?: string; organizationId?: string }) => Promise<NextResponse>
+  handler: (req: NextRequest, context: { userId?: string; organizationId?: string; resourceId?: string }) => Promise<NextResponse>
 ) {
   return async (req: NextRequest): Promise<NextResponse> => {
     const startTime = Date.now();
@@ -20,6 +20,9 @@ export function withErrorHandler(
       const session = await auth();
       const userId = session?.user?.id;
       const organizationId = (session?.user as any)?.organizationId;
+
+      // Extract resource ID from URL path (e.g., /api/properties/[id])
+      const resourceId = req.nextUrl.pathname.split("/").pop()?.replace(/^\[.*\]$/, "") || undefined;
 
       // CSRF validation for mutation methods
       if (MUTATION_METHODS.has(req.method)) {
@@ -38,7 +41,7 @@ export function withErrorHandler(
         }
       }
 
-      const context = { userId, organizationId };
+      const context = { userId, organizationId, resourceId };
 
       const response = await handler(req, context);
       const duration = Date.now() - startTime;

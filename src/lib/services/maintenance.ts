@@ -5,6 +5,29 @@ import { MaintenanceCategory, Priority, WorkOrderStatus } from "@prisma/client";
 
 const WORK_ORDER_MANAGEMENT_ROLES = ["PROPERTY_OWNER", "PROPERTY_MANAGER", "MAINTENANCE_STAFF", "SUPER_ADMIN"];
 
+const WORK_ORDER_STATUS_TRANSITIONS: Record<string, string[]> = {
+  NEW: ["UNDER_REVIEW", "CANCELLED"],
+  UNDER_REVIEW: ["AWAITING_APPROVAL", "NEW", "CANCELLED"],
+  AWAITING_APPROVAL: ["APPROVED", "UNDER_REVIEW", "CANCELLED"],
+  APPROVED: ["ASSIGNED", "AWAITING_APPROVAL", "CANCELLED"],
+  ASSIGNED: ["SCHEDULED", "APPROVED", "CANCELLED"],
+  SCHEDULED: ["IN_PROGRESS", "ASSIGNED", "CANCELLED"],
+  IN_PROGRESS: ["WAITING_FOR_PARTS", "COMPLETED", "SCHEDULED", "CANCELLED"],
+  WAITING_FOR_PARTS: ["IN_PROGRESS", "CANCELLED"],
+  COMPLETED: ["CLOSED", "IN_PROGRESS"],
+  CLOSED: [],
+  CANCELLED: ["NEW"],
+};
+
+function validateStatusTransition(currentStatus: string, newStatus: string): void {
+  const allowed = WORK_ORDER_STATUS_TRANSITIONS[currentStatus];
+  if (!allowed || !allowed.includes(newStatus)) {
+    throw new ForbiddenError(
+      `Invalid status transition from ${currentStatus} to ${newStatus}`
+    );
+  }
+}
+
 async function assertCanManageWorkOrders(userId: string, organizationId: string, workOrderId: string) {
   const user = await db.user.findUnique({
     where: { id: userId },
@@ -319,6 +342,11 @@ export class WorkOrderService {
           throw new ForbiddenError(`Contractors cannot set status to ${data.status}`);
         }
       }
+
+      // General status transition validation for all users
+      if (data.status && data.status !== workOrder.status) {
+        validateStatusTransition(workOrder.status, data.status);
+      }
     }
 
     const updateData: Prisma.WorkOrderUpdateInput = { ...data };
@@ -349,7 +377,12 @@ export class WorkOrderService {
 
         await tx.maintenanceRequest.update({
           where: { id: workOrder.maintenanceRequestId },
-          data: { status: data.status as WorkOrderStatus },
+          data: {
+            status: data.status as WorkOrderStatus,
+            ...(data.status === "COMPLETED" || data.status === "CLOSED"
+              ? { completionDate: new Date() }
+              : {}),
+          },
         });
 
         // Audit log for maintenance request status change

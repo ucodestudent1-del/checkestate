@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   try {
     const ctx = await requireOrganization();
     const organizationId = ctx.organizationId;
-
+    const now = new Date();
     const [
       totalProperties,
       totalUnits,
@@ -30,8 +30,8 @@ export async function GET(req: NextRequest) {
         where: {
           organizationId,
           expenseDate: {
-            gte: new Date(new Date().setDate(1)),
-            lt: new Date(new Date().setMonth(new Date().getMonth() + 1, 1)),
+            gte: new Date(now.getFullYear(), now.getMonth(), 1),
+            lt: new Date(now.getFullYear(), now.getMonth() + 1, 1),
           },
         },
         _sum: { actualCost: true },
