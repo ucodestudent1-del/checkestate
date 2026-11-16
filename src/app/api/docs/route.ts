@@ -182,6 +182,7 @@ export async function GET() {
             totalPages: { type: "integer" },
 },
       },
+      },
     },
     security: [
       { sessionAuth: [] },

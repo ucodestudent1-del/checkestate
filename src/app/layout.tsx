@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { SessionProvider } from "next-auth/react";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import SkipLink from "@/components/SkipLink";
+import { CookieConsentBanner } from "@/components/CookieConsentBanner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -29,6 +30,7 @@ export default function RootLayout({
         <SkipLink />
         <SessionProvider>
           <QueryProvider>{children}</QueryProvider>
+          <CookieConsentBanner />
         </SessionProvider>
       </body>
     </html>
