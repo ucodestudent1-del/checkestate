@@ -190,8 +190,8 @@ model SubscriptionPlan {
   planType     PlanType
   name         String
   description  String?
-  priceMonthly Int         @db.Decimal(10, 2)
-  priceYearly  Int         @db.Decimal(10, 2)
+  priceMonthly Decimal @db.Decimal(10, 2)
+  priceYearly  Decimal @db.Decimal(10, 2)
   unitLimit    Int
   features     Json        @default("{}")
   aiUsageLimit Int         @default(0)
